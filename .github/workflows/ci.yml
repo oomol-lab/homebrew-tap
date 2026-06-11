@@ -1,0 +1,44 @@
+name: CI
+
+# Style + audit for every cask in the tap, on manual pushes and PRs. The
+# pushes made by bump-lockime.yml do NOT trigger this workflow (GITHUB_TOKEN
+# pushes never trigger `on: push` — GitHub's recursion guard); that path
+# runs the same audit itself, before pushing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: brew audit
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      # Authenticated GitHub API calls — brew audit --online checks release
+      # URLs and livecheck against api.github.com, which rate-limits
+      # anonymous CI runners aggressively.
+      HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # brew refuses to operate on a tap that is a shallow clone.
+          fetch-depth: 0
+
+      - name: Install this checkout as the tap
+        # Symlink the working copy into brew's tap directory so the casks are
+        # auditable under their real fully-qualified token
+        # (oomol-lab/tap/lockime) without a second clone.
+        run: |
+          TAP_DIR="$(brew --repository)/Library/Taps/oomol-lab"
+          mkdir -p "$TAP_DIR"
+          ln -s "$GITHUB_WORKSPACE" "$TAP_DIR/homebrew-tap"
+
+      - name: brew style
+        run: brew style oomol-lab/tap
+
+      - name: brew audit
+        run: brew audit --cask --tap oomol-lab/tap --online --strict
