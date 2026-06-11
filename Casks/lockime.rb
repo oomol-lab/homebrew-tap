@@ -1,9 +1,9 @@
 cask "lockime" do
   arch arm: "arm64", intel: "x86_64"
 
-  version "1.1.0"
-  sha256 arm:   "6ca1ac2713cf4e50a5f8810bda4ed27e201fa15220fb89e849797a85ba0d39ba",
-         intel: "53d61206b2a8dedaae54965a2f551d5eb53f5d28b3493be076b518fc9989d437"
+  version "1.1.1"
+  sha256 arm:   "e41eac14a46a960cd1ffa6566f3e280b8b517269e49b12ba19b3fa2dadfadc29",
+         intel: "0af996de5d00d194d6f6694ac83bb84ed7a3b40d11db01a271f4600e5a3aea29"
 
   url "https://github.com/oomol-lab/LockIME/releases/download/v#{version}/LockIME-#{version}-#{arch}.zip"
   name "LockIME"
