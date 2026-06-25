@@ -1,9 +1,9 @@
 name: CI
 
-# Style + audit for every cask in the tap, on manual pushes and PRs. The
-# pushes made by bump-lockime.yml do NOT trigger this workflow (GITHUB_TOKEN
-# pushes never trigger `on: push` — GitHub's recursion guard); that path
-# runs the same audit itself, before pushing.
+# Style + audit for every cask and formula in the tap, on manual pushes and
+# PRs. The pushes made by the bump-* workflows do NOT trigger this workflow
+# (GITHUB_TOKEN pushes never trigger `on: push` — GitHub's recursion guard);
+# those paths run the same audit themselves, before pushing.
 on:
   push:
     branches: [main]
@@ -38,7 +38,19 @@ jobs:
           ln -s "$GITHUB_WORKSPACE" "$TAP_DIR/homebrew-tap"
 
       - name: brew style
+        # Styles every .rb in the tap — casks and formulae alike.
         run: brew style oomol-lab/tap
 
-      - name: brew audit
+      - name: brew audit (casks)
         run: brew audit --cask --tap oomol-lab/tap --online --strict
+
+      - name: brew audit (formulae)
+        # Only when the tap actually has formulae — `brew audit --formula` errors
+        # if there are none (e.g. before the first dockswipe release).
+        run: |
+          set -euo pipefail
+          if ls Formula/*.rb >/dev/null 2>&1; then
+            brew audit --formula --tap oomol-lab/tap --online --strict
+          else
+            echo "No formulae in the tap yet — skipping formula audit."
+          fi

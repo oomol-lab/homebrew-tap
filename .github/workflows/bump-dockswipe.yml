@@ -1,0 +1,130 @@
+name: Bump dockswipe
+
+# Updates Formula/dockswipe.rb to a published dockswipe release. Normally
+# triggered by the dockswipe release pipeline (it sends a repository_dispatch
+# with the version once a release is live); the workflow_dispatch input is the
+# manual fallback. The version is the only payload — the tarballs are
+# re-downloaded from the GitHub Release here and the sha256 hashes computed from
+# them, so the formula can never carry hashes that do not match the published
+# artifacts. dockswipe has no beta channel; every release is stable.
+#
+# Like bump-lockime.yml, this rewrites an EXISTING Formula/dockswipe.rb in place
+# (version + the two arch sha256s). The formula must be seeded once after the
+# first release — see README ("How versions are bumped").
+on:
+  repository_dispatch:
+    types: [dockswipe-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released dockswipe version to bump to (e.g. 1.2.3, no v prefix)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# Serialize bumps: two dispatches racing would both branch from the same HEAD
+# and the second push would be rejected.
+concurrency:
+  group: bump-dockswipe
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump dockswipe to ${{ github.event.client_payload.version || inputs.version }}
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The audit step symlinks this checkout in as a tap, and brew refuses
+          # to operate on a tap that is a shallow clone.
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          RAW_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${RAW_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "error: no version in dispatch payload or workflow input" >&2
+            exit 1
+          fi
+          # The formula tracks stable releases only — never bump to a pre-release
+          # (1.2.3-rc.1). dockswipe never ships one, but guard the manual path.
+          case "$VERSION" in
+            *-*) echo "Pre-release $VERSION — the formula tracks stable only, nothing to do"; exit 0 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite formula
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ ! -f Formula/dockswipe.rb ]; then
+            echo "error: Formula/dockswipe.rb is missing — it ships as a committed placeholder" >&2
+            echo "       seed (see README 'How versions are bumped'). Restore it, then re-run." >&2
+            exit 1
+          fi
+          if grep -q "version \"$VERSION\"" Formula/dockswipe.rb; then
+            echo "Formula already at $VERSION — nothing to do"
+            exit 0
+          fi
+          BASE="https://github.com/oomol-lab/dockswipe/releases/download/v$VERSION"
+          # -f: a 404 (typoed version, assets still uploading) must fail the run,
+          # not hash an HTML error page into the formula.
+          curl -fsSL -o arm64.tar.gz  "$BASE/dockswipe-$VERSION-arm64.tar.gz"
+          curl -fsSL -o x86_64.tar.gz "$BASE/dockswipe-$VERSION-x86_64.tar.gz"
+          SHA_ARM="$(shasum -a 256 arm64.tar.gz | cut -d' ' -f1)"
+          SHA_INTEL="$(shasum -a 256 x86_64.tar.gz | cut -d' ' -f1)"
+          rm -f arm64.tar.gz x86_64.tar.gz
+          # version is the single source of truth (the urls interpolate #{version}).
+          # Each sha256 is anchored to its arch's url line so the two
+          # identical-looking `sha256` lines can't be swapped.
+          perl -0777 -i -pe "
+            s/^  version \".*\"/  version \"$VERSION\"/m;
+            s/(arm64\.tar\.gz\"\n\s*sha256 \")[0-9a-f]{64}/\${1}$SHA_ARM/;
+            s/(x86_64\.tar\.gz\"\n\s*sha256 \")[0-9a-f]{64}/\${1}$SHA_INTEL/;
+          " Formula/dockswipe.rb
+          # The asserts catch a pattern that silently failed to match (e.g. a
+          # hand-edit that broke the canonical layout).
+          grep -q "version \"$VERSION\"" Formula/dockswipe.rb
+          grep -q "$SHA_ARM" Formula/dockswipe.rb
+          grep -q "$SHA_INTEL" Formula/dockswipe.rb
+          brew style Formula/dockswipe.rb
+
+      - name: Audit before pushing
+        # This workflow pushes with GITHUB_TOKEN, and such pushes never trigger
+        # `on: push` workflows (GitHub's recursion guard) — ci.yml will NOT run
+        # on the bump commit. So the full audit must happen here, before the
+        # push: a bad bump fails this run and never lands.
+        if: steps.version.outputs.version != ''
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAP_DIR="$(brew --repository)/Library/Taps/oomol-lab"
+          mkdir -p "$TAP_DIR"
+          ln -s "$GITHUB_WORKSPACE" "$TAP_DIR/homebrew-tap"
+          brew audit --formula --online --strict oomol-lab/tap/dockswipe
+
+      - name: Commit & push
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898024+github-actions[bot]@users.noreply.github.com"
+          git commit -am "dockswipe $VERSION"
+          git push
