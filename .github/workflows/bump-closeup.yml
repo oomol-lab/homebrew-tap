@@ -1,0 +1,119 @@
+name: Bump closeup
+
+# Updates Casks/closeup.rb to a published CloseUp release. Normally triggered
+# by the CloseUp release pipeline (build-publish.yml sends a
+# repository_dispatch with the version once a stable release is live); the
+# workflow_dispatch input is the manual fallback. The version is the only
+# payload — the zips are re-downloaded from the GitHub Release here and the
+# sha256 hashes computed from them, so the cask can never carry hashes that
+# do not match the published artifacts.
+on:
+  repository_dispatch:
+    types: [closeup-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released CloseUp version to bump to (e.g. 1.2.3, no v prefix)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# Serialize bumps: two dispatches racing would both branch from the same
+# HEAD and the second push would be rejected.
+concurrency:
+  group: bump-closeup
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump closeup to ${{ github.event.client_payload.version || inputs.version }}
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The audit step symlinks this checkout in as a tap, and brew
+          # refuses to operate on a tap that is a shallow clone.
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          RAW_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${RAW_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "error: no version in dispatch payload or workflow input" >&2
+            exit 1
+          fi
+          # The cask tracks the stable channel only — never bump to a beta
+          # (1.2.3-beta.4). The CloseUp pipeline already skips pre-releases;
+          # this guards the manual path.
+          case "$VERSION" in
+            *-*) echo "Pre-release $VERSION — cask tracks stable only, nothing to do"; exit 0 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite cask
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if grep -q "version \"$VERSION\"" Casks/closeup.rb; then
+            echo "Cask already at $VERSION — nothing to do"
+            exit 0
+          fi
+          BASE="https://github.com/oomol-lab/CloseUp/releases/download/v$VERSION"
+          # -f: a 404 (typoed version, assets still uploading) must fail the
+          # run, not hash an HTML error page into the cask.
+          curl -fsSL -o arm64.zip  "$BASE/CloseUp-$VERSION-arm64.zip"
+          curl -fsSL -o x86_64.zip "$BASE/CloseUp-$VERSION-x86_64.zip"
+          SHA_ARM="$(shasum -a 256 arm64.zip | cut -d' ' -f1)"
+          SHA_INTEL="$(shasum -a 256 x86_64.zip | cut -d' ' -f1)"
+          rm -f arm64.zip x86_64.zip
+          # The patterns match the canonical layout brew style enforces, so a
+          # hand-edit that breaks them is caught by the asserts below.
+          sed -E -i '' \
+            -e "s|^  version \".*\"|  version \"$VERSION\"|" \
+            -e "s|arm:   \"[0-9a-f]{64}\"|arm:   \"$SHA_ARM\"|" \
+            -e "s|intel: \"[0-9a-f]{64}\"|intel: \"$SHA_INTEL\"|" \
+            Casks/closeup.rb
+          grep -q "version \"$VERSION\"" Casks/closeup.rb
+          grep -q "$SHA_ARM" Casks/closeup.rb
+          grep -q "$SHA_INTEL" Casks/closeup.rb
+          brew style Casks/closeup.rb
+
+      - name: Audit before pushing
+        # This workflow pushes with GITHUB_TOKEN, and such pushes never
+        # trigger `on: push` workflows (GitHub's recursion guard) — ci.yml
+        # will NOT run on the bump commit. So the full audit must happen
+        # here, before the push: a bad bump fails this run and never lands.
+        if: steps.version.outputs.version != ''
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAP_DIR="$(brew --repository)/Library/Taps/oomol-lab"
+          mkdir -p "$TAP_DIR"
+          ln -s "$GITHUB_WORKSPACE" "$TAP_DIR/homebrew-tap"
+          brew audit --cask --online --strict oomol-lab/tap/closeup
+
+      - name: Commit & push
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898024+github-actions[bot]@users.noreply.github.com"
+          git commit -am "closeup $VERSION"
+          git push
