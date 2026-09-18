@@ -1,9 +1,9 @@
 cask "closeup" do
   arch arm: "arm64", intel: "x86_64"
 
-  version "1.0.2"
-  sha256 arm:   "fd0567a171bed5c8291c4a81d736c9d7c781a94244031c01bb1187e4c874cd72",
-         intel: "6663a69daefcccebfc60c941982102698fec052fecf56ef7b747c0061dfa4e74"
+  version "1.0.3"
+  sha256 arm:   "d3cae565fa9d68f28036b131da8c3382235114ec829a27402c6e38ba230fe092",
+         intel: "1244b24f9d85132f93852ca04de658cacbb93285ceb7d9dd54f2424b30c809b3"
 
   url "https://github.com/oomol-lab/CloseUp/releases/download/v#{version}/CloseUp-#{version}-#{arch}.zip"
   name "CloseUp"
