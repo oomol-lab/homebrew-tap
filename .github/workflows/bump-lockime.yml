@@ -101,6 +101,10 @@ jobs:
           TAP_DIR="$(brew --repository)/Library/Taps/oomol-lab"
           mkdir -p "$TAP_DIR"
           ln -s "$GITHUB_WORKSPACE" "$TAP_DIR/homebrew-tap"
+          # Homebrew 7+ refuses to load anything from a non-official tap until
+          # it is trusted; without this `brew audit` fails with "Refusing to
+          # load ... from untrusted tap".
+          brew trust oomol-lab/tap
           brew audit --cask --online --strict oomol-lab/tap/lockime
 
       - name: Commit & push
