@@ -9,8 +9,8 @@ name: Bump dockswipe
 # artifacts. dockswipe has no beta channel; every release is stable.
 #
 # Like bump-lockime.yml, this rewrites an EXISTING Formula/dockswipe.rb in place
-# (version + the two arch sha256s). The formula must be seeded once after the
-# first release — see README ("How versions are bumped").
+# (the version inside both urls + the two arch sha256s). The formula must be
+# seeded once after the first release — see README ("How versions are bumped").
 on:
   repository_dispatch:
     types: [dockswipe-release]
@@ -72,7 +72,7 @@ jobs:
             echo "       seed (see README 'How versions are bumped'). Restore it, then re-run." >&2
             exit 1
           fi
-          if grep -q "version \"$VERSION\"" Formula/dockswipe.rb; then
+          if grep -q "/download/v$VERSION/dockswipe-$VERSION-arm64\.tar\.gz\"" Formula/dockswipe.rb; then
             echo "Formula already at $VERSION — nothing to do"
             exit 0
           fi
@@ -84,17 +84,18 @@ jobs:
           SHA_ARM="$(shasum -a 256 arm64.tar.gz | cut -d' ' -f1)"
           SHA_INTEL="$(shasum -a 256 x86_64.tar.gz | cut -d' ' -f1)"
           rm -f arm64.tar.gz x86_64.tar.gz
-          # version is the single source of truth (the urls interpolate #{version}).
-          # Each sha256 is anchored to its arch's url line so the two
+          # The formula has no `version` line (audit rejects one that merely
+          # repeats what brew scans from the url), so the version lives in the
+          # two urls. Each sha256 is anchored to its arch's url line so the two
           # identical-looking `sha256` lines can't be swapped.
           perl -0777 -i -pe "
-            s/^  version \".*\"/  version \"$VERSION\"/m;
+            s{/download/v[^/\"]+/dockswipe-[^\"]+-(arm64|x86_64)\.tar\.gz\"}{/download/v$VERSION/dockswipe-$VERSION-\${1}.tar.gz\"}g;
             s/(arm64\.tar\.gz\"\n\s*sha256 \")[0-9a-f]{64}/\${1}$SHA_ARM/;
             s/(x86_64\.tar\.gz\"\n\s*sha256 \")[0-9a-f]{64}/\${1}$SHA_INTEL/;
           " Formula/dockswipe.rb
           # The asserts catch a pattern that silently failed to match (e.g. a
           # hand-edit that broke the canonical layout).
-          grep -q "version \"$VERSION\"" Formula/dockswipe.rb
+          [ "$(grep -c "/download/v$VERSION/dockswipe-$VERSION-" Formula/dockswipe.rb)" = 2 ]
           grep -q "$SHA_ARM" Formula/dockswipe.rb
           grep -q "$SHA_INTEL" Formula/dockswipe.rb
           brew style Formula/dockswipe.rb
