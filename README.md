@@ -41,13 +41,14 @@ never reach the tap.
 | dockswipe | `dockswipe-release` | [`bump-dockswipe.yml`](.github/workflows/bump-dockswipe.yml) | `Formula/dockswipe.rb` |
 
 Each bump edits an **existing** file in place (version + the two arch
-`sha256`s), so the cask/formula must exist first. `Casks/lockime.rb` does, and
-`Formula/dockswipe.rb` is committed as a **placeholder seed** (version `0.0.0`,
-all-zero `sha256`s); the first dockswipe release auto-fills it. Keep the
-placeholder shas as 64 hex chars — the bump's regex matches `[0-9a-f]{64}`, and
-the url/sha256 must stay nested in `on_macos` → `on_arm`/`on_intel` (current
-`brew style` rejects them in a top-level `on_arm`). The seed commit uses
-`[skip ci]` so the not-yet-real release isn't audited online.
+`sha256`s), so the cask/formula must exist first. The casks carry an explicit
+`version` that their urls interpolate. `Formula/dockswipe.rb` deliberately has
+**no** `version` line — brew scans the version from the urls, and `brew audit`
+rejects an explicit one as redundant — so its bump rewrites the version inside
+both urls instead. Keep the shas as 64 hex chars (the bump's regex matches
+`[0-9a-f]{64}`), keep the `dockswipe-<version>-<arch>.tar.gz` url layout, and
+keep the url/sha256 nested in `on_macos` → `on_arm`/`on_intel` (current
+`brew style` rejects them in a top-level `on_arm`).
 
 Manual fallback: Actions → **Bump lockime** / **Bump closeup** / **Bump
 dockswipe** → Run workflow with the released version (e.g. `1.2.3`).
